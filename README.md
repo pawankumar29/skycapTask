@@ -12,11 +12,18 @@ Supported denominations:
 - Rs. 500
 - Rs. 2000
 
-The app runs locally with Flask, OpenCV, NumPy, and an optional TensorFlow classifier. No external API key or hosted service is required at runtime.
+The app runs with Flask, OpenCV, NumPy, and an optional TensorFlow classifier. Docker is the recommended way to build, train, and run the project. No external API key or hosted service is required at runtime.
 
-## Run With Docker
+## Docker First Setup
 
-Build and start the app:
+After cloning the repo, copy the dataset separately into this structure:
+
+```text
+currency/data/fake/
+currency/data/real/
+```
+
+Build and run the app:
 
 ```bash
 docker compose up --build
@@ -34,9 +41,13 @@ Stop the app:
 docker compose down
 ```
 
+The app can run without a trained TensorFlow model. In that case it uses the OpenCV and reference-image checks only. For better fake-note detection, train the TensorFlow model and then rebuild the app.
+
 ## Train TensorFlow In Docker
 
-The TensorFlow model is used as a strong fake-note signal. The dataset is not committed to Git because it is large. Before training, copy the dataset into this structure:
+The TensorFlow model is used as a strong fake-note signal. The dataset is not committed to Git because it is large.
+
+Required dataset structure:
 
 ```text
 currency/data/fake/
@@ -66,7 +77,18 @@ These generated model files are also ignored by Git. After training, rebuild the
 docker compose up --build
 ```
 
-## Run Without Docker
+Full recommended Docker flow:
+
+```bash
+docker compose up --build
+docker compose down
+docker compose run --rm trainer
+docker compose up --build
+```
+
+## Optional: Run Without Docker
+
+Docker is the recommended way to run this project. Use this section only if you want to run the Flask server directly on your machine for local debugging.
 
 Create a virtual environment and install dependencies:
 
@@ -134,16 +156,16 @@ Loss:
 sparse_categorical_crossentropy
 ```
 
-The model is trained by:
-
-```bash
-python train_tensorflow_model.py
-```
-
-or inside Docker:
+Recommended Docker training command:
 
 ```bash
 docker compose run --rm trainer
+```
+
+Optional local training command, only if TensorFlow is installed on your machine:
+
+```bash
+python train_tensorflow_model.py
 ```
 
 ## Source Files
