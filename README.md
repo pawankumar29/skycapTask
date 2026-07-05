@@ -21,6 +21,7 @@ After cloning the repo, copy the dataset separately into this structure:
 ```text
 currency/data/fake/
 currency/data/real/
+currency/denomination_data/
 ```
 
 Build and run the app:
@@ -42,6 +43,24 @@ docker compose down
 ```
 
 The app can run without a trained TensorFlow model. In that case it uses the OpenCV and reference-image checks only. For better fake-note detection, train the TensorFlow model and then rebuild the app.
+
+## Denomination Dataset
+
+Use this folder when adding training images for a separate denomination classifier:
+
+```text
+currency/denomination_data/10/
+currency/denomination_data/20/
+currency/denomination_data/50/
+currency/denomination_data/100/
+currency/denomination_data/200/
+currency/denomination_data/500/
+currency/denomination_data/2000/
+```
+
+Put note images into the folder matching the note value. For example, Rs. 500 images should go into `currency/denomination_data/500/`.
+
+This dataset is also ignored by Git because it can become large. Share it separately with whoever will train or test the project.
 
 ## Train TensorFlow In Docker
 
@@ -188,6 +207,7 @@ python train_tensorflow_model.py
 Not included in Git:
 
 - `currency/data/` - large real/fake training dataset
+- `currency/denomination_data/` - large denomination training dataset
 - `currency_authenticity_model.keras` - generated TensorFlow model
 - `currency_authenticity_model.json` - generated model metadata
 

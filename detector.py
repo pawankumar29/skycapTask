@@ -207,6 +207,10 @@ def choose_final_result(notebook_result: dict, dataset_result: dict) -> dict:
         notebook_payload["checks"].extend(dataset_checks)
         return notebook_payload
 
+    if dataset_result["accepted"]:
+        dataset_payload["checks"].extend(notebook_payload["checks"])
+        return dataset_payload
+
     if dataset_result["denomination"] not in {"Rs. 500", "Rs. 2000"}:
         return dataset_payload
 
@@ -283,8 +287,23 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
         fake_reference_match,
     )
     tensorflow_review = is_tensorflow_review(tensorflow_result, tensorflow_fake_hit)
+    tensorflow_real_support = has_tensorflow_real_support(tensorflow_result, best_real_score, reference_margin, fake_reference_match)
     is_fake_like = fake_reference_match or tensorflow_fake_hit
-    accepted = (not is_fake_like) and (not tensorflow_review) and best_real_score >= 0.50 and best_denom_score >= 0.46 and (generated_features_pass or strong_genuine_pass)
+    accepted = (
+        (not is_fake_like)
+        and (not tensorflow_review)
+        and best_real_score >= 0.50
+        and best_denom_score >= 0.46
+        and (
+            generated_features_pass
+            or strong_genuine_pass
+            or (
+                tensorflow_real_support
+                and generated_verified_count >= 5
+                and generated_avg_score >= MIN_GENERATED_FEATURE_AVG
+            )
+        )
+    )
     suspicious = (not accepted) and (not is_fake_like) and (
         best_real_score >= 0.42
         or best_denom_score >= 0.40
@@ -296,6 +315,8 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
 
     if accepted and strong_genuine_pass and not generated_features_pass:
         message = f"Strong genuine-reference match found for Rs. {best_denom}; {generated_verified_count} out of 10 visual checks also matched."
+    elif accepted and tensorflow_real_support and not generated_features_pass:
+        message = f"TensorFlow and genuine-reference checks support Rs. {best_denom}; {generated_verified_count} out of 10 visual checks also matched."
     elif accepted:
         message = f"{generated_verified_count} out of 10 generated notebook-style features are verified for Rs. {best_denom}."
     elif is_fake_like:
@@ -531,6 +552,20 @@ def should_trust_tensorflow_fake(
         return False
 
     return True
+
+
+def has_tensorflow_real_support(result: dict | None, best_real_score: float, reference_margin: float, fake_reference_match: bool) -> bool:
+    if result is None or fake_reference_match:
+        return False
+
+    real_probability = result["real_probability"]
+    fake_probability = result["fake_probability"]
+    return (
+        real_probability >= 0.60
+        and real_probability >= fake_probability + 0.20
+        and best_real_score >= 0.68
+        and reference_margin >= -0.01
+    )
 
 
 def is_tensorflow_review(result: dict | None, fake_hit: bool = False) -> bool:
