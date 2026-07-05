@@ -1,0 +1,16 @@
+services:
+  currency-detector:
+    build: .
+    image: indian-currency-detector:latest
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  trainer:
+    build: .
+    image: indian-currency-detector:latest
+    profiles:
+      - train
+    volumes:
+      - .:/app
+    command: python train_tensorflow_model.py --epochs 18 --batch-size 8 --prefetch 1

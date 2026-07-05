@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Indian Currency Note Detector</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace">
+        <div class="intro">
+          <p class="eyebrow">Local browser analysis</p>
+          <h1>Indian Currency Note Detector</h1>
+          <p class="summary">Upload a note image to detect Rs. 10, Rs. 20, Rs. 50, Rs. 100, Rs. 200, Rs. 500, or Rs. 2000 using local image-processing checks and reject suspicious or fake-like notes.</p>
+          <div class="denomination-strip" aria-label="Supported denominations">
+            <span>Rs. 10</span>
+            <span>Rs. 20</span>
+            <span>Rs. 50</span>
+            <span>Rs. 100</span>
+            <span>Rs. 200</span>
+            <span>Rs. 500</span>
+            <span>Rs. 2000</span>
+          </div>
+        </div>
+
+        <label class="drop-zone" id="dropZone" for="noteInput">
+          <input id="noteInput" type="file" accept="image/*">
+          <span class="upload-icon" aria-hidden="true">+</span>
+          <span class="upload-title">Choose or drop an image</span>
+          <span class="upload-hint">JPG, PNG, WEBP, or camera image</span>
+        </label>
+
+        <div class="preview-panel">
+          <canvas id="previewCanvas" width="960" height="430"></canvas>
+          <div class="empty-state" id="emptyState">Image preview appears here</div>
+        </div>
+      </section>
+
+      <aside class="result-panel" aria-live="polite">
+        <div class="status-card" id="statusCard">
+          <span class="status-pill" id="statusPill">Waiting</span>
+          <h2 id="resultTitle">Upload a currency note</h2>
+          <p id="resultText">The result will include denomination, confidence, and authenticity checks.</p>
+        </div>
+
+        <div class="metrics">
+          <div>
+            <span class="metric-label">Denomination</span>
+            <strong id="denomination">-</strong>
+          </div>
+          <div>
+            <span class="metric-label">Confidence</span>
+            <strong id="confidence">-</strong>
+          </div>
+          <div>
+            <span class="metric-label">Authenticity</span>
+            <strong id="authScore">-</strong>
+          </div>
+        </div>
+
+        <section class="checks">
+          <h2>Checks</h2>
+          <ul id="checkList">
+            <li>Upload an image to start analysis.</li>
+          </ul>
+        </section>
+      </aside>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

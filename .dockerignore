@@ -1,0 +1,9 @@
+.git
+.agents
+__pycache__/
+*.pyc
+*.ipynb
+*.pdf
+*.lnk
+README.md
+currency/
