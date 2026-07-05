@@ -47,6 +47,8 @@ The app can run without a trained TensorFlow model. In that case it uses the Ope
 
 The TensorFlow model is used as a strong fake-note signal. The dataset is not committed to Git because it is large.
 
+Accuracy depends heavily on the dataset used for training. Better real/fake coverage, balanced denomination folders, and more training epochs will usually improve results. Weak or missing training data for a denomination can reduce accuracy even when the code is working correctly.
+
 Required dataset structure:
 
 ```text
@@ -211,6 +213,7 @@ This is a lightweight local detector, not a certified banknote authentication sy
 - crop and rotation
 - front-side vs back-side note image
 - fake/real dataset quality
+- how well the TensorFlow model is trained
 - number of TensorFlow training epochs
 
 ## What Can Be Done Better

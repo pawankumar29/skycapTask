@@ -20,10 +20,10 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 MIN_GENERATED_FEATURE_COUNT = 8
 MIN_GENERATED_FEATURE_AVG = 0.14
 DEFAULT_TENSORFLOW_THRESHOLDS = {
-    "fake_reject_probability": 0.60,
-    "fake_reject_margin": 0.02,
-    "fake_review_probability": 0.52,
-    "fake_review_margin": 0.00,
+    "fake_reject_probability": 0.90,
+    "fake_reject_margin": 0.20,
+    "fake_review_probability": 0.70,
+    "fake_review_margin": 0.10,
 }
 
 
@@ -188,6 +188,14 @@ def choose_final_result(notebook_result: dict, dataset_result: dict) -> dict:
         return dataset_payload
 
     if dataset_result.get("needs_review"):
+        if notebook_accepts and notebook_result["denomination"] in {"Rs. 500", "Rs. 2000"}:
+            notebook_payload["confidence"] = max(notebook_confidence, dataset_result["confidence"])
+            notebook_payload["message"] = (
+                f"{notebook_result['verified_count']} out of 10 original notebook features are verified for "
+                f"{notebook_result['denomination']}; generated checks need review."
+            )
+            notebook_payload["checks"].extend(dataset_checks)
+            return notebook_payload
         if notebook_accepts and notebook_result["denomination"] == dataset_result["denomination"]:
             dataset_payload["checks"].extend(notebook_payload["checks"])
         return dataset_payload
@@ -255,8 +263,6 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
     denomination_consistent = visual_denom is None or visual_denom == best_denom
     generated_checks, generated_verified_count, generated_avg_score = run_generated_notebook_style_checks(image, best_denom)
     tensorflow_result = run_tensorflow_authenticator(image)
-    tensorflow_fake_hit = is_tensorflow_fake_hit(tensorflow_result)
-    tensorflow_review = is_tensorflow_review(tensorflow_result)
     reference_margin = top_real_mean - top_fake_mean
     nearest_fake_hit = best_fake_score >= 0.82 and authenticity < 0.03
     neighborhood_fake_hit = (
@@ -268,6 +274,15 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
     fake_reference_match = (nearest_fake_hit or neighborhood_fake_hit) and not strong_genuine_match
     generated_features_pass = generated_verified_count >= MIN_GENERATED_FEATURE_COUNT and generated_avg_score >= MIN_GENERATED_FEATURE_AVG
     strong_genuine_pass = strong_genuine_match and generated_verified_count >= 5 and generated_avg_score >= 0.10
+    tensorflow_fake_hit = is_tensorflow_fake_hit(tensorflow_result) and should_trust_tensorflow_fake(
+        tensorflow_result,
+        generated_verified_count,
+        best_real_score,
+        authenticity,
+        reference_margin,
+        fake_reference_match,
+    )
+    tensorflow_review = is_tensorflow_review(tensorflow_result, tensorflow_fake_hit)
     is_fake_like = fake_reference_match or tensorflow_fake_hit
     accepted = (not is_fake_like) and (not tensorflow_review) and best_real_score >= 0.50 and best_denom_score >= 0.46 and (generated_features_pass or strong_genuine_pass)
     suspicious = (not accepted) and (not is_fake_like) and (
@@ -285,7 +300,7 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
         message = f"{generated_verified_count} out of 10 generated notebook-style features are verified for Rs. {best_denom}."
     elif is_fake_like:
         if tensorflow_fake_hit:
-            message = f"TensorFlow authenticity model strongly predicts fake, even though {generated_verified_count} visual denomination checks matched."
+            message = "TensorFlow authenticity model strongly predicts fake and supporting checks did not clear the note."
         else:
             message = (
                 "Fake-note reference similarity is stronger than genuine-note similarity, "
@@ -453,12 +468,12 @@ def run_tensorflow_authenticator(image: np.ndarray) -> dict | None:
 
 def tensorflow_thresholds(metadata_thresholds: dict | None) -> dict:
     configured = {**DEFAULT_TENSORFLOW_THRESHOLDS, **(metadata_thresholds or {})}
-    # Runtime caps keep older metadata from weakening the fake-note veto.
+    # Runtime floors keep older metadata from making TensorFlow too aggressive.
     return {
-        "fake_reject_probability": min(configured["fake_reject_probability"], DEFAULT_TENSORFLOW_THRESHOLDS["fake_reject_probability"]),
-        "fake_reject_margin": min(configured["fake_reject_margin"], DEFAULT_TENSORFLOW_THRESHOLDS["fake_reject_margin"]),
-        "fake_review_probability": min(configured["fake_review_probability"], DEFAULT_TENSORFLOW_THRESHOLDS["fake_review_probability"]),
-        "fake_review_margin": min(configured["fake_review_margin"], DEFAULT_TENSORFLOW_THRESHOLDS["fake_review_margin"]),
+        "fake_reject_probability": max(configured["fake_reject_probability"], DEFAULT_TENSORFLOW_THRESHOLDS["fake_reject_probability"]),
+        "fake_reject_margin": max(configured["fake_reject_margin"], DEFAULT_TENSORFLOW_THRESHOLDS["fake_reject_margin"]),
+        "fake_review_probability": max(configured["fake_review_probability"], DEFAULT_TENSORFLOW_THRESHOLDS["fake_review_probability"]),
+        "fake_review_margin": max(configured["fake_review_margin"], DEFAULT_TENSORFLOW_THRESHOLDS["fake_review_margin"]),
     }
 
 
@@ -496,8 +511,30 @@ def is_tensorflow_fake_hit(result: dict | None) -> bool:
     )
 
 
-def is_tensorflow_review(result: dict | None) -> bool:
-    if result is None or is_tensorflow_fake_hit(result):
+def should_trust_tensorflow_fake(
+    result: dict | None,
+    generated_verified_count: int,
+    best_real_score: float,
+    authenticity: float,
+    reference_margin: float,
+    fake_reference_match: bool,
+) -> bool:
+    if result is None:
+        return False
+
+    fake_probability = result["fake_probability"]
+    visual_supports_note = generated_verified_count >= 6 and best_real_score >= 0.60
+    references_are_ambiguous = authenticity >= -0.03 and reference_margin >= -0.03
+    very_strong_tensorflow_fake = fake_probability >= 0.96
+
+    if visual_supports_note and references_are_ambiguous and not fake_reference_match and not very_strong_tensorflow_fake:
+        return False
+
+    return True
+
+
+def is_tensorflow_review(result: dict | None, fake_hit: bool = False) -> bool:
+    if result is None or fake_hit:
         return False
     thresholds = result.get("thresholds", DEFAULT_TENSORFLOW_THRESHOLDS)
     fake_probability = result["fake_probability"]
