@@ -85,19 +85,16 @@ function drawPreview(file) {
 function renderResult(analysis) {
   statusCard.className = "status-card";
   if (analysis.accepted) statusCard.classList.add("pass");
-  else if (analysis.suspicious) statusCard.classList.add("warn");
   else statusCard.classList.add("fail");
 
-  statusPill.textContent = analysis.accepted ? "Accepted" : analysis.suspicious ? "Review" : "Rejected";
+  statusPill.textContent = analysis.accepted ? "Accepted" : "Rejected";
   resultTitle.textContent = analysis.accepted
     ? `${analysis.denomination} note detected`
-    : analysis.suspicious
-      ? `${analysis.denomination} needs review`
-      : analysis.isKnownFake
-        ? "Fake note rejected"
-        : "Image rejected";
+    : analysis.isKnownFake
+      ? "Fake note rejected"
+      : "Image rejected";
   resultText.textContent = analysis.message;
-  denominationEl.textContent = analysis.accepted || analysis.suspicious ? analysis.denomination : "Not valid";
+  denominationEl.textContent = analysis.accepted ? analysis.denomination : "Not valid";
   confidenceEl.textContent = `${analysis.confidence}%`;
   authScoreEl.textContent = `${analysis.authenticity}%`;
 

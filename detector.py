@@ -15,14 +15,16 @@ CURRENCY_DATA = BASE_DIR / "currency" / "data"
 REFERENCE_CACHE = BASE_DIR / "reference_cache.npz"
 TENSORFLOW_MODEL = BASE_DIR / "currency_authenticity_model.keras"
 TENSORFLOW_MODEL_METADATA = BASE_DIR / "currency_authenticity_model.json"
+TENSORFLOW_DENOMINATION_MODEL = BASE_DIR / "currency_denomination_model.keras"
+TENSORFLOW_DENOMINATION_MODEL_METADATA = BASE_DIR / "currency_denomination_model.json"
 SUPPORTED_DENOMS = ("10", "20", "50", "100", "200", "500", "2000")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 MIN_GENERATED_FEATURE_COUNT = 8
 MIN_GENERATED_FEATURE_AVG = 0.14
 DEFAULT_TENSORFLOW_THRESHOLDS = {
-    "fake_reject_probability": 0.90,
+    "fake_reject_probability": 0.75,
     "fake_reject_margin": 0.20,
-    "fake_review_probability": 0.70,
+    "fake_review_probability": 0.75,
     "fake_review_margin": 0.10,
 }
 
@@ -130,12 +132,10 @@ def analyze_currency(image: np.ndarray) -> dict:
 
     result = choose_final_result(notebook_result, dataset_result)
     accepted = result["accepted"]
-    suspicious = result["suspicious"]
     confidence = result["confidence"]
 
     return {
         "accepted": accepted,
-        "suspicious": suspicious,
         "denomination": result["denomination"],
         "confidence": confidence,
         "authenticity": confidence,
@@ -148,11 +148,10 @@ def analyze_currency(image: np.ndarray) -> dict:
 def choose_final_result(notebook_result: dict, dataset_result: dict) -> dict:
     notebook_confidence = int(round((notebook_result["verified_count"] / 10) * 100))
     notebook_accepts = notebook_result["verified_count"] >= 8
-    notebook_suspicious = not notebook_accepts and notebook_result["verified_count"] >= 4
 
     notebook_payload = {
         "accepted": notebook_accepts,
-        "suspicious": notebook_suspicious,
+        "suspicious": False,
         "denomination": notebook_result["denomination"],
         "confidence": notebook_confidence,
         "is_fake_like": False,
@@ -176,7 +175,7 @@ def choose_final_result(notebook_result: dict, dataset_result: dict) -> dict:
     ]
     dataset_payload = {
         "accepted": dataset_result["accepted"],
-        "suspicious": dataset_result["suspicious"],
+        "suspicious": False,
         "denomination": dataset_result["denomination"],
         "confidence": dataset_result["confidence"],
         "is_fake_like": dataset_result["is_fake_like"],
@@ -185,19 +184,6 @@ def choose_final_result(notebook_result: dict, dataset_result: dict) -> dict:
     }
 
     if dataset_result["is_fake_like"]:
-        return dataset_payload
-
-    if dataset_result.get("needs_review"):
-        if notebook_accepts and notebook_result["denomination"] in {"Rs. 500", "Rs. 2000"}:
-            notebook_payload["confidence"] = max(notebook_confidence, dataset_result["confidence"])
-            notebook_payload["message"] = (
-                f"{notebook_result['verified_count']} out of 10 original notebook features are verified for "
-                f"{notebook_result['denomination']}; generated checks need review."
-            )
-            notebook_payload["checks"].extend(dataset_checks)
-            return notebook_payload
-        if notebook_accepts and notebook_result["denomination"] == dataset_result["denomination"]:
-            dataset_payload["checks"].extend(notebook_payload["checks"])
         return dataset_payload
 
     if notebook_accepts and notebook_result["denomination"] == dataset_result["denomination"]:
@@ -264,7 +250,25 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
         best_denom_score = max(best_denom_score, best_real_score)
 
     visual_denom, visual_feature_count, visual_avg_score = estimate_visual_denomination(image)
-    denomination_consistent = visual_denom is None or visual_denom == best_denom
+    tensorflow_denomination_result = run_tensorflow_denomination_classifier(image)
+    tensorflow_denom = tensorflow_denomination_result["denomination"] if tensorflow_denomination_result else None
+    tensorflow_denom_score = tensorflow_denomination_result["confidence"] if tensorflow_denomination_result else 0.0
+    if (
+        tensorflow_denom
+        and tensorflow_denom_score >= 0.70
+        and not strong_genuine_match
+        and (
+            best_denom_score < 0.58
+            or (visual_denom == tensorflow_denom and visual_feature_count >= 4)
+        )
+    ):
+        best_denom = tensorflow_denom
+        best_denom_score = max(best_denom_score, tensorflow_denom_score)
+
+    denomination_consistent = (
+        (visual_denom is None or visual_denom == best_denom)
+        and (tensorflow_denom is None or tensorflow_denom_score < 0.60 or tensorflow_denom == best_denom)
+    )
     generated_checks, generated_verified_count, generated_avg_score = run_generated_notebook_style_checks(image, best_denom)
     tensorflow_result = run_tensorflow_authenticator(image)
     reference_margin = top_real_mean - top_fake_mean
@@ -278,14 +282,7 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
     fake_reference_match = (nearest_fake_hit or neighborhood_fake_hit) and not strong_genuine_match
     generated_features_pass = generated_verified_count >= MIN_GENERATED_FEATURE_COUNT and generated_avg_score >= MIN_GENERATED_FEATURE_AVG
     strong_genuine_pass = strong_genuine_match and generated_verified_count >= 5 and generated_avg_score >= 0.10
-    tensorflow_fake_hit = is_tensorflow_fake_hit(tensorflow_result) and should_trust_tensorflow_fake(
-        tensorflow_result,
-        generated_verified_count,
-        best_real_score,
-        authenticity,
-        reference_margin,
-        fake_reference_match,
-    )
+    tensorflow_fake_hit = is_tensorflow_fake_hit(tensorflow_result)
     tensorflow_review = is_tensorflow_review(tensorflow_result, tensorflow_fake_hit)
     tensorflow_real_support = has_tensorflow_real_support(tensorflow_result, best_real_score, reference_margin, fake_reference_match)
     is_fake_like = fake_reference_match or tensorflow_fake_hit
@@ -304,13 +301,6 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
             )
         )
     )
-    suspicious = (not accepted) and (not is_fake_like) and (
-        best_real_score >= 0.42
-        or best_denom_score >= 0.40
-        or generated_verified_count >= 4
-        or tensorflow_review
-        or (fake_reference_match and generated_features_pass)
-    )
     confidence = int(round(max(generated_verified_count / 10, min(1.0, best_denom_score)) * 100))
 
     if accepted and strong_genuine_pass and not generated_features_pass:
@@ -328,7 +318,7 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
                 f"even though {generated_verified_count} visual denomination checks matched."
             )
     elif tensorflow_review:
-        message = f"{generated_verified_count} out of 10 visual checks matched, but TensorFlow fake probability is high enough for manual review."
+        message = f"{generated_verified_count} out of 10 visual checks matched, but TensorFlow fake probability is too high to accept."
     elif not generated_features_pass:
         message = (
             f"{generated_verified_count} out of 10 generated notebook-style features passed, "
@@ -337,7 +327,7 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
         if fake_reference_match:
             message += " Fake-note reference similarity also failed."
     elif fake_reference_match:
-        message = f"{generated_verified_count} out of 10 visual denomination checks matched, but fake-note reference similarity needs review."
+        message = f"{generated_verified_count} out of 10 visual denomination checks matched, but fake-note reference similarity failed."
     else:
         message = f"Only {generated_verified_count} out of 10 generated notebook-style features are verified."
 
@@ -357,6 +347,7 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
             denomination_consistent,
             f"Visual feature templates matched Rs. {visual_denom or '-'} with {visual_feature_count}/7 denomination features and {visual_avg_score * 100:.0f}% average score.",
         ),
+        make_tensorflow_denomination_check(tensorflow_denomination_result, best_denom),
         make_check(
             "Generated feature average",
             generated_avg_score >= MIN_GENERATED_FEATURE_AVG,
@@ -388,11 +379,11 @@ def run_reference_dataset_pipeline(image: np.ndarray) -> dict | None:
 
     return {
         "accepted": accepted,
-        "suspicious": suspicious,
+        "suspicious": False,
         "denomination": f"Rs. {best_denom}",
         "confidence": confidence,
         "is_fake_like": is_fake_like,
-        "needs_review": tensorflow_review,
+        "needs_review": False,
         "message": message,
         "checks": checks,
     }
@@ -487,6 +478,48 @@ def run_tensorflow_authenticator(image: np.ndarray) -> dict | None:
     }
 
 
+@lru_cache(maxsize=1)
+def load_tensorflow_denomination_classifier():
+    if not TENSORFLOW_DENOMINATION_MODEL.exists():
+        return None
+    try:
+        import tensorflow as tf
+    except ImportError:
+        return None
+
+    model = tf.keras.models.load_model(TENSORFLOW_DENOMINATION_MODEL)
+    if TENSORFLOW_DENOMINATION_MODEL_METADATA.exists():
+        metadata = json.loads(TENSORFLOW_DENOMINATION_MODEL_METADATA.read_text(encoding="utf-8"))
+    else:
+        metadata = {"class_names": list(SUPPORTED_DENOMS), "image_size": [224, 224]}
+    return model, metadata
+
+
+def run_tensorflow_denomination_classifier(image: np.ndarray) -> dict | None:
+    loaded = load_tensorflow_denomination_classifier()
+    if loaded is None:
+        return None
+
+    model, metadata = loaded
+    image_size = tuple(metadata.get("image_size", [224, 224]))
+    class_names = list(metadata.get("class_names", SUPPORTED_DENOMS))
+
+    batch = np.stack([prepare_tensorflow_view(view, image_size) for view in tensorflow_input_views(image)])
+    predictions = np.asarray(model.predict(batch, verbose=0), dtype=np.float32)
+    if predictions.ndim == 1:
+        predictions = predictions.reshape(1, -1)
+
+    mean_predictions = np.mean(predictions, axis=0)
+    best_index = int(np.argmax(mean_predictions))
+    denomination = class_names[best_index] if best_index < len(class_names) else "-"
+    confidence = float(mean_predictions[best_index])
+    return {
+        "denomination": denomination,
+        "confidence": confidence,
+        "view_count": int(len(predictions)),
+    }
+
+
 def tensorflow_thresholds(metadata_thresholds: dict | None) -> dict:
     configured = {**DEFAULT_TENSORFLOW_THRESHOLDS, **(metadata_thresholds or {})}
     # Runtime floors keep older metadata from making TensorFlow too aggressive.
@@ -532,28 +565,6 @@ def is_tensorflow_fake_hit(result: dict | None) -> bool:
     )
 
 
-def should_trust_tensorflow_fake(
-    result: dict | None,
-    generated_verified_count: int,
-    best_real_score: float,
-    authenticity: float,
-    reference_margin: float,
-    fake_reference_match: bool,
-) -> bool:
-    if result is None:
-        return False
-
-    fake_probability = result["fake_probability"]
-    visual_supports_note = generated_verified_count >= 6 and best_real_score >= 0.60
-    references_are_ambiguous = authenticity >= -0.03 and reference_margin >= -0.03
-    very_strong_tensorflow_fake = fake_probability >= 0.96
-
-    if visual_supports_note and references_are_ambiguous and not fake_reference_match and not very_strong_tensorflow_fake:
-        return False
-
-    return True
-
-
 def has_tensorflow_real_support(result: dict | None, best_real_score: float, reference_margin: float, fake_reference_match: bool) -> bool:
     if result is None or fake_reference_match:
         return False
@@ -594,6 +605,28 @@ def make_tensorflow_check(result: dict | None, fake_hit: bool) -> dict:
         (
             f"Real probability {result['real_probability'] * 100:.0f}%, "
             f"fake probability {result['fake_probability'] * 100:.0f}% "
+            f"across {result.get('view_count', 1)} image views."
+        ),
+    )
+
+
+def make_tensorflow_denomination_check(result: dict | None, selected_denomination: str) -> dict:
+    if result is None:
+        return {
+            "title": "TensorFlow denomination model",
+            "passed": True,
+            "warning": False,
+            "detail": "No trained denomination model found; skipped optional denomination classifier.",
+        }
+
+    predicted = result["denomination"]
+    confidence = result["confidence"]
+    passed = predicted == selected_denomination or confidence < 0.60
+    return make_check(
+        "TensorFlow denomination model",
+        passed,
+        (
+            f"Predicted Rs. {predicted} with {confidence * 100:.0f}% confidence "
             f"across {result.get('view_count', 1)} image views."
         ),
     )

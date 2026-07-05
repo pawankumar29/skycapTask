@@ -49,3 +49,5 @@ docker-data/
 currency/
 currency_authenticity_model.keras
 currency_authenticity_model.json
+currency_denomination_model.keras
+currency_denomination_model.json
